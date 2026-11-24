@@ -1,19 +1,23 @@
 /**
- * Music Transcription Engine
+ * Music Transcription Engine with Dropout Hysteresis & Note Smoothing
  * Segments continuous pitch detection streams into discrete musical notes
- * with musical timing, duration, quantized rhythmic values, and measures.
+ * without false fragmentation from breath, vibrato, or room echo.
  */
 
 class MusicTranscriber {
     constructor() {
         this.bpm = 100;
         this.timeSignature = { numerator: 4, denominator: 4 };
-        this.minNoteDuration = 0.08; // 80ms minimum note length to reject transient noise
+        this.minNoteDuration = 0.07; // 70ms minimum note length
         this.currentNote = null;
         this.transcribedNotes = [];
         this.lastPitchMidi = null;
         this.lastRms = 0;
         this.currentTime = 0;
+
+        // Dropout tolerance (bridges micro-gaps and breaths without fragmenting notes)
+        this.dropoutFrames = 0;
+        this.maxDropoutFrames = 4; // ~80-120ms grace period
 
         this.onNoteAdded = null;
         this.onNoteUpdated = null;
@@ -29,11 +33,12 @@ class MusicTranscriber {
         this.lastPitchMidi = null;
         this.lastRms = 0;
         this.currentTime = 0;
+        this.dropoutFrames = 0;
     }
 
     /**
      * Process a real-time pitch sample
-     * @param {Object} pitchResult - { midi, freq, rms, confidence }
+     * @param {Object} pitchResult - { midi, freq, rms, confidence, status }
      * @param {number} timestamp - current audio timestamp in seconds
      */
     processSample(pitchResult, timestamp) {
@@ -42,29 +47,39 @@ class MusicTranscriber {
         const rms = pitchResult.rms;
 
         // Energy onset check (sharp rise in volume signals new note attack even if same pitch)
-        const isEnergyOnset = rms > 0.04 && rms > this.lastRms * 2.2;
+        const isEnergyOnset = rms > 0.035 && rms > this.lastRms * 2.0;
         this.lastRms = rms;
 
         if (midi !== null) {
-            // Valid pitch detected
+            // Valid pitch detected!
+            this.dropoutFrames = 0;
+
             if (this.currentNote === null) {
-                // Start new note
+                // Start a brand new note
                 this.startNote(midi, timestamp, rms);
             } else if (this.currentNote.midi !== midi || isEnergyOnset) {
-                // Pitch changed or new attack: finalize previous note and start new one
+                // Pitch shifted or new attack: finalize previous note and start new one
                 this.finalizeCurrentNote(timestamp);
                 this.startNote(midi, timestamp, rms);
             } else {
-                // Sustain existing note
+                // Sustain current note
                 this.currentNote.duration = timestamp - this.currentNote.startTime;
                 if (this.onNoteUpdated) {
                     this.onNoteUpdated(this.currentNote);
                 }
             }
         } else {
-            // Silence / no confident pitch
+            // No pitch detected in this frame (silence, breath, unvoiced consonant, or noise)
             if (this.currentNote !== null) {
-                this.finalizeCurrentNote(timestamp);
+                this.dropoutFrames++;
+                // Only terminate note after grace period expires
+                if (this.dropoutFrames > this.maxDropoutFrames) {
+                    this.finalizeCurrentNote(timestamp - (this.dropoutFrames * 0.025));
+                    this.dropoutFrames = 0;
+                } else {
+                    // Extend note during momentary drop
+                    this.currentNote.duration = timestamp - this.currentNote.startTime;
+                }
             }
         }
     }
@@ -76,7 +91,7 @@ class MusicTranscriber {
             noteName: PitchDetector.midiToNoteName(midi),
             startTime: startTime,
             duration: 0.05,
-            velocity: Math.min(1.0, rms * 4.0),
+            velocity: Math.min(1.0, Math.max(0.4, rms * 5.0)),
             quantized: null
         };
     }
@@ -84,7 +99,7 @@ class MusicTranscriber {
     finalizeCurrentNote(endTime) {
         if (!this.currentNote) return;
 
-        this.currentNote.duration = endTime - this.currentNote.startTime;
+        this.currentNote.duration = Math.max(0.05, endTime - this.currentNote.startTime);
 
         // Ignore micro-glitches shorter than min duration
         if (this.currentNote.duration >= this.minNoteDuration) {
@@ -105,21 +120,19 @@ class MusicTranscriber {
         const secondsPerBeat = 60.0 / this.bpm;
         const beats = note.duration / secondsPerBeat;
 
-        // Standard rhythmic values in beats (in 4/4)
-        // 4.0 = Whole, 2.0 = Half, 1.0 = Quarter, 0.5 = Eighth, 0.25 = Sixteenth
         let type = 'quarter';
         let beatLength = 1.0;
 
-        if (beats >= 3.0) {
+        if (beats >= 2.8) {
             type = 'whole';
             beatLength = 4.0;
-        } else if (beats >= 1.5) {
+        } else if (beats >= 1.4) {
             type = 'half';
             beatLength = 2.0;
-        } else if (beats >= 0.75) {
+        } else if (beats >= 0.65) {
             type = 'quarter';
             beatLength = 1.0;
-        } else if (beats >= 0.35) {
+        } else if (beats >= 0.3) {
             type = 'eighth';
             beatLength = 0.5;
         } else {
@@ -127,7 +140,6 @@ class MusicTranscriber {
             beatLength = 0.25;
         }
 
-        // Measure calculation (4 beats per measure)
         const startBeat = note.startTime / secondsPerBeat;
         const measure = Math.floor(startBeat / this.timeSignature.numerator) + 1;
         const beatInMeasure = (startBeat % this.timeSignature.numerator) + 1;
@@ -141,15 +153,13 @@ class MusicTranscriber {
     }
 
     /**
-     * Transcribe an entire AudioBuffer offline (e.g. uploaded MP3/WAV file)
-     * Rapid multi-pass analysis for instant sheet music generation
+     * Transcribe an entire AudioBuffer offline (uploaded MP3/WAV file)
      */
     async transcribeAudioBuffer(audioBuffer, pitchDetector, onProgress = null) {
         this.reset();
         const sampleRate = audioBuffer.sampleRate;
         pitchDetector.setSampleRate(sampleRate);
 
-        // Analyze audio in sliding windows of 2048 samples with 50% overlap
         const channelData = audioBuffer.getChannelData(0);
         const windowSize = 2048;
         const hopSize = 1024;
@@ -174,7 +184,6 @@ class MusicTranscriber {
             }
         }
 
-        // Finalize remaining note if any
         if (this.currentNote !== null) {
             this.finalizeCurrentNote(channelData.length / sampleRate);
         }
