@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="NoteScribe">
+    <meta name="theme-color" content="#0a0e17">
+    <title>NoteScribe - Listen to Audio & Draw Sheet Music Notes</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="app-header">
+        <div class="brand-wrapper">
+            <span class="brand-icon">𝄞</span>
+            <div>
+                <h1 class="brand-title">NoteScribe</h1>
+                <p class="brand-subtitle">Audio Listener & Sheet Music Transcriber</p>
+            </div>
+        </div>
+
+        <!-- Input Source Switcher Tabs -->
+        <nav class="source-tabs">
+            <button class="source-tab-btn active" data-source="mic">
+                <span>🎙️</span> Live Microphone
+            </button>
+            <button class="source-tab-btn" data-source="file">
+                <span>📁</span> Upload Audio File
+            </button>
+            <button class="source-tab-btn" data-source="demo">
+                <span>🎼</span> Demo Songs
+            </button>
+        </nav>
+    </header>
+
+    <main class="app-main">
+
+        <!-- SOURCE PANEL 1: LIVE MICROPHONE -->
+        <section id="panel-mic" class="source-panel active">
+            <div>
+                <h3 style="font-size: 15px; font-weight: 700; color: #ffffff;">🎙️ Live Microphone Input</h3>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                    Sing, hum, or play your piano/guitar. NoteScribe listens in real-time and draws the musical notes immediately.
+                </p>
+            </div>
+            <button id="mic-toggle-btn" class="mic-btn">
+                <span class="status-dot"></span> Start Listening (Microphone)
+            </button>
+        </section>
+
+        <!-- SOURCE PANEL 2: AUDIO FILE UPLOAD -->
+        <section id="panel-file" class="source-panel">
+            <div style="flex: 1;">
+                <h3 style="font-size: 15px; font-weight: 700; color: #ffffff;">📁 Transcribe Audio File (MP3 / WAV / M4A)</h3>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                    Upload any recorded song or melody. NoteScribe will transcribe the entire track into sheet music.
+                </p>
+            </div>
+            <div id="drop-zone" class="drop-zone">
+                <span style="font-size: 22px;">🎵</span>
+                <div style="font-size: 13px; font-weight: 600; color: #ffffff; margin-top: 4px;">
+                    Drag & drop song file here, or click to browse
+                </div>
+                <input type="file" id="audio-file-input" accept="audio/*" style="display: none;">
+            </div>
+            <div id="file-status-msg" style="width: 100%; font-size: 12px; color: var(--primary);"></div>
+        </section>
+
+        <!-- SOURCE PANEL 3: BUILT-IN DEMO TRACKS -->
+        <section id="panel-demo" class="source-panel">
+            <div>
+                <h3 style="font-size: 15px; font-weight: 700; color: #ffffff;">🎼 Built-in Demo Songs</h3>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                    Test audio listening & sheet music drawing with 1 click without needing a microphone.
+                </p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <select id="demo-song-select" style="background:#1e293b; color:#fff; border:1px solid rgba(255,255,255,0.15); padding:8px 12px; border-radius:8px; font-size:13px;"></select>
+                <button id="play-demo-btn" class="btn btn-primary">
+                    <span>▶</span> Transcribe & Play Demo
+                </button>
+            </div>
+            <div id="demo-status-msg" style="width: 100%; font-size: 12px; color: var(--primary);"></div>
+        </section>
+
+        <!-- LIVE HUD & PITCH TUNER GAUGE -->
+        <section class="hud-strip">
+            <!-- Detected Pitch -->
+            <div class="hud-card">
+                <span class="hud-label">DETECTED PITCH</span>
+                <div class="hud-note-display">
+                    <span id="hud-note-name" class="hud-note-name">---</span>
+                    <span id="hud-freq-val" class="hud-freq-val">0 Hz</span>
+                </div>
+            </div>
+
+            <!-- Pitch Tuner Cents Gauge -->
+            <div class="hud-card">
+                <span class="hud-label">TUNER ACCURACY (CENTS)</span>
+                <div class="tuner-box">
+                    <span style="font-size:10px; color:var(--text-dim);">-50¢</span>
+                    <div class="tuner-meter">
+                        <div class="tuner-center-mark"></div>
+                        <div id="tuner-needle" class="tuner-needle"></div>
+                    </div>
+                    <span style="font-size:10px; color:var(--text-dim);">+50¢</span>
+                    <span id="tuner-cents-val" class="tuner-cents-val">0¢</span>
+                </div>
+            </div>
+
+            <!-- Oscilloscope Waveform -->
+            <div class="hud-card">
+                <span class="hud-label">INPUT AUDIO WAVEFORM</span>
+                <div class="waveform-box">
+                    <canvas id="waveform-canvas"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- STAGE 1: MUSICAL GRAND STAFF (SHEET MUSIC) -->
+        <section class="stage-card">
+            <div class="stage-header">
+                <span class="stage-title">
+                    <span>🎼</span> Musical Grand Staff (Treble & Bass Clefs)
+                </span>
+                <span style="font-size: 11px; color: var(--text-dim);">Click any note on the staff to audition its sound</span>
+            </div>
+            <div class="canvas-box">
+                <canvas id="sheet-music-canvas"></canvas>
+            </div>
+        </section>
+
+        <!-- STAGE 2: PIANO ROLL TIMELINE -->
+        <section class="stage-card">
+            <div class="stage-header">
+                <span class="stage-title">
+                    <span>🎹</span> Melody Timeline & Piano Roll Grid
+                </span>
+                <span style="font-size: 11px; color: var(--text-dim);">Pitch vs Time Visualization</span>
+            </div>
+            <div class="canvas-box">
+                <canvas id="piano-roll-canvas"></canvas>
+            </div>
+        </section>
+
+        <!-- CONTROLS & EXPORTS TOOLBAR -->
+        <footer class="controls-toolbar">
+            <div class="player-actions">
+                <button id="play-btn" class="btn btn-primary">
+                    <span>▶</span> Play
+                </button>
+                <button id="pause-btn" class="btn btn-secondary">
+                    <span>❚❚</span> Pause
+                </button>
+                <button id="clear-btn" class="btn btn-secondary">
+                    <span>↺</span> Clear
+                </button>
+            </div>
+
+            <!-- Sliders -->
+            <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+                <div class="slider-group">
+                    <span>Tempo:</span>
+                    <input type="range" id="bpm-slider" min="50" max="180" step="5" value="100">
+                    <span id="bpm-val" class="slider-val">100 BPM</span>
+                </div>
+                <div class="slider-group">
+                    <span>Sensitivity:</span>
+                    <input type="range" id="noise-threshold-slider" min="0.005" max="0.06" step="0.005" value="0.015">
+                    <span id="noise-val" class="slider-val">15%</span>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-group">
+                <div id="stats-notes-count" class="stat-chip">0 Notes</div>
+                <div id="stats-duration" class="stat-chip">0.0s</div>
+            </div>
+
+            <!-- Export Buttons -->
+            <div style="display: flex; gap: 8px;">
+                <button id="export-midi-btn" class="btn btn-accent" title="Download Standard MIDI File (.mid)">
+                    <span>💾</span> Export MIDI
+                </button>
+                <button id="print-sheet-btn" class="btn btn-secondary" title="Print Sheet Music or Save to PDF">
+                    <span>🖨️</span> Print Score
+                </button>
+                <button id="export-json-btn" class="btn btn-secondary" title="Export Notes JSON">
+                    <span>📋</span> JSON
+                </button>
+            </div>
+        </footer>
+
+    </main>
+
+    <!-- Application Scripts -->
+    <script src="pitchDetector.js"></script>
+    <script src="transcriber.js"></script>
+    <script src="sheetRenderer.js"></script>
+    <script src="pianoRoll.js"></script>
+    <script src="synth.js"></script>
+    <script src="midiWriter.js"></script>
+    <script src="demoSongs.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
