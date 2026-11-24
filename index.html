@@ -40,12 +40,42 @@
 
         <!-- SOURCE PANEL 1: LIVE MICROPHONE -->
         <section id="panel-mic" class="source-panel active">
-            <div>
+            <div style="flex: 1; min-width: 250px;">
                 <h3 style="font-size: 15px; font-weight: 700; color: #ffffff;">🎙️ Live Microphone Input</h3>
                 <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
                     Sing, hum, or play your piano/guitar. NoteScribe listens in real-time and draws the musical notes immediately.
                 </p>
             </div>
+
+            <!-- Mic Sensitivity & Gain Controls -->
+            <div class="mic-settings-strip">
+                <div class="setting-item">
+                    <label for="mic-preset-select">Preset:</label>
+                    <select id="mic-preset-select" class="form-select-sm">
+                        <option value="piano" selected>🎹 Piano / Instrument</option>
+                        <option value="vocal">🎤 Vocal / Humming</option>
+                        <option value="guitar">🎸 Guitar / Strings</option>
+                        <option value="noisy">🌪️ Noisy Room (Filtered)</option>
+                        <option value="quiet">🤫 Quiet Mic (High Gain)</option>
+                    </select>
+                </div>
+
+                <div class="setting-item">
+                    <label for="mic-gain-slider">Mic Gain:</label>
+                    <input type="range" id="mic-gain-slider" min="1.0" max="4.5" step="0.2" value="2.0" style="width: 70px;">
+                    <span id="mic-gain-val" style="font-size: 11px; font-weight: bold; width: 28px;">2.0x</span>
+                </div>
+
+                <!-- Input Level Meter -->
+                <div class="setting-item">
+                    <label>Level:</label>
+                    <div class="vu-meter-box">
+                        <div id="vu-meter-bar" class="vu-meter-bar"></div>
+                        <div id="vu-threshold-line" class="vu-threshold-line"></div>
+                    </div>
+                </div>
+            </div>
+
             <button id="mic-toggle-btn" class="mic-btn">
                 <span class="status-dot"></span> Start Listening (Microphone)
             </button>
@@ -95,6 +125,7 @@
                     <span id="hud-note-name" class="hud-note-name">---</span>
                     <span id="hud-freq-val" class="hud-freq-val">0 Hz</span>
                 </div>
+                <div id="hud-diagnostic-status" class="hud-diagnostic">Waiting for sound...</div>
             </div>
 
             <!-- Pitch Tuner Cents Gauge -->
@@ -196,6 +227,39 @@
 
     </main>
 
+    <!-- PRINT PREVIEW & PDF EXPORT MODAL -->
+    <div id="print-modal" class="print-modal-overlay" style="display: none;">
+        <div class="print-modal-content">
+            <div class="print-modal-bar">
+                <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                    <span style="font-size: 15px; font-weight: 800; color: #0f172a;">🖨️ Sheet Music Print Preview</span>
+                    <label style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                        <input type="checkbox" id="print-labels-toggle" checked> Note Labels
+                    </label>
+                    <label style="font-size: 12px; color: #475569; display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                        Measures/Line:
+                        <select id="print-measures-per-line" class="form-select-sm" style="background:#ffffff; color:#0f172a; border-color:#cbd5e1;">
+                            <option value="3">3</option>
+                            <option value="4" selected>4 (Standard)</option>
+                            <option value="5">5</option>
+                        </select>
+                    </label>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button id="do-print-btn" class="btn btn-primary" style="background: #2563eb; color: #ffffff;">
+                        <span>🖨️</span> Print / Save PDF
+                    </button>
+                    <button id="close-print-modal-btn" class="btn btn-secondary" style="background: #e2e8f0; color: #0f172a; border-color: #cbd5e1;">
+                        Close
+                    </button>
+                </div>
+            </div>
+
+            <!-- Full-Song Multi-System Sheet Paper -->
+            <div id="printable-score-paper" class="printable-score-paper"></div>
+        </div>
+    </div>
+
     <!-- Application Scripts -->
     <script src="pitchDetector.js"></script>
     <script src="transcriber.js"></script>
@@ -204,6 +268,7 @@
     <script src="synth.js"></script>
     <script src="midiWriter.js"></script>
     <script src="demoSongs.js"></script>
+    <script src="scorePrinter.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
