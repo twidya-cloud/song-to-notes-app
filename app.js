@@ -42,6 +42,11 @@ class NoteScribeApp {
         this.centsValEl = document.getElementById('tuner-cents-val');
         this.statsNotesCountEl = document.getElementById('stats-notes-count');
         this.statsDurationEl = document.getElementById('stats-duration');
+        this.vuBarEl = document.getElementById('vu-meter-bar');
+        this.diagnosticEl = document.getElementById('hud-diagnostic-status');
+        this.micGainNode = null;
+        this.highpassFilter = null;
+        this.currentGain = 2.0;
 
         this.init();
     }
@@ -61,7 +66,17 @@ class NoteScribeApp {
 
             this.analyser = this.audioCtx.createAnalyser();
             this.analyser.fftSize = 2048;
-            this.analyser.smoothingTimeConstant = 0.1;
+            this.analyser.smoothingTimeConstant = 0.15;
+
+            // Pre-amp gain booster for quiet microphones and distant instruments
+            this.micGainNode = this.audioCtx.createGain();
+            this.micGainNode.gain.setValueAtTime(this.currentGain, this.audioCtx.currentTime);
+
+            // Highpass filter at 75Hz to eliminate AC hum and desk vibration rumble
+            this.highpassFilter = this.audioCtx.createBiquadFilter();
+            this.highpassFilter.type = 'highpass';
+            this.highpassFilter.frequency.setValueAtTime(75, this.audioCtx.currentTime);
+            this.highpassFilter.Q.setValueAtTime(0.7, this.audioCtx.currentTime);
         }
         if (this.audioCtx.state === 'suspended') {
             this.audioCtx.resume();
@@ -123,6 +138,22 @@ class NoteScribeApp {
             this.toggleMicrophone();
         });
 
+        // Mic Gain Slider
+        document.getElementById('mic-gain-slider')?.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            this.currentGain = val;
+            if (this.micGainNode && this.audioCtx) {
+                this.micGainNode.gain.setValueAtTime(val, this.audioCtx.currentTime);
+            }
+            const display = document.getElementById('mic-gain-val');
+            if (display) display.textContent = `${val.toFixed(1)}x`;
+        });
+
+        // Presets Selector
+        document.getElementById('mic-preset-select')?.addEventListener('change', (e) => {
+            this.applyPreset(e.target.value);
+        });
+
         // 2. Audio File Upload
         const fileInput = document.getElementById('audio-file-input');
         fileInput?.addEventListener('change', (e) => {
@@ -173,8 +204,14 @@ class NoteScribeApp {
 
         // Export Buttons
         document.getElementById('export-midi-btn')?.addEventListener('click', () => this.exportMidi());
-        document.getElementById('print-sheet-btn')?.addEventListener('click', () => window.print());
+        document.getElementById('print-sheet-btn')?.addEventListener('click', () => this.openPrintModal());
         document.getElementById('export-json-btn')?.addEventListener('click', () => this.exportJson());
+
+        // Print Modal Controls
+        document.getElementById('close-print-modal-btn')?.addEventListener('click', () => this.closePrintModal());
+        document.getElementById('do-print-btn')?.addEventListener('click', () => window.print());
+        document.getElementById('print-labels-toggle')?.addEventListener('change', () => this.refreshPrintScore());
+        document.getElementById('print-measures-per-line')?.addEventListener('change', () => this.refreshPrintScore());
     }
 
     populateDemoSelector() {
@@ -203,6 +240,37 @@ class NoteScribeApp {
         }
     }
 
+    applyPreset(presetName) {
+        let gain = 2.0;
+        let rms = 0.006;
+        let conf = 0.60;
+
+        if (presetName === 'piano') {
+            gain = 2.5; rms = 0.006; conf = 0.60;
+        } else if (presetName === 'vocal') {
+            gain = 2.0; rms = 0.005; conf = 0.58;
+        } else if (presetName === 'guitar') {
+            gain = 2.8; rms = 0.006; conf = 0.62;
+        } else if (presetName === 'noisy') {
+            gain = 1.0; rms = 0.020; conf = 0.72;
+        } else if (presetName === 'quiet') {
+            gain = 4.0; rms = 0.003; conf = 0.55;
+        }
+
+        this.currentGain = gain;
+        this.pitchDetector.rmsThreshold = rms;
+        this.pitchDetector.confidenceThreshold = conf;
+
+        if (this.micGainNode && this.audioCtx) {
+            this.micGainNode.gain.setValueAtTime(gain, this.audioCtx.currentTime);
+        }
+
+        const slider = document.getElementById('mic-gain-slider');
+        const display = document.getElementById('mic-gain-val');
+        if (slider) slider.value = gain;
+        if (display) display.textContent = `${gain.toFixed(1)}x`;
+    }
+
     // ==========================================
     // 1. REAL-TIME MICROPHONE LISTENING
     // ==========================================
@@ -223,7 +291,10 @@ class NoteScribeApp {
                 });
 
                 this.sourceNode = this.audioCtx.createMediaStreamSource(this.mediaStream);
-                this.sourceNode.connect(this.analyser);
+                // Mic chain: source -> highpassFilter (cuts 75Hz rumble) -> micGainNode (boosts audio) -> analyser
+                this.sourceNode.connect(this.highpassFilter);
+                this.highpassFilter.connect(this.micGainNode);
+                this.micGainNode.connect(this.analyser);
 
                 this.isListeningMic = true;
                 this.audioStartTime = this.audioCtx.currentTime;
@@ -257,13 +328,15 @@ class NoteScribeApp {
 
     startAnalysisLoop() {
         const buffer = new Float32Array(this.analyser.fftSize);
+        const freqBuffer = new Float32Array(this.analyser.frequencyBinCount);
 
         const loop = () => {
             if (!this.isListeningMic) return;
             this.analyser.getFloatTimeDomainData(buffer);
+            this.analyser.getFloatFrequencyData(freqBuffer);
 
             const timestamp = this.audioCtx.currentTime - this.audioStartTime;
-            const pitchResult = this.pitchDetector.detectPitch(buffer);
+            const pitchResult = this.pitchDetector.detectPitch(buffer, freqBuffer);
 
             this.transcriber.processSample(pitchResult, timestamp);
             this.sheetRenderer.setCurrentTime(timestamp);
@@ -408,6 +481,12 @@ class NoteScribeApp {
     // HUD & TUNER UPDATES
     // ==========================================
     updateHUD(result) {
+        // Update VU input volume meter bar
+        if (this.vuBarEl && result) {
+            const vuPercent = Math.min(100, Math.round(result.rms * 600));
+            this.vuBarEl.style.width = `${vuPercent}%`;
+        }
+
         if (result && result.midi !== null) {
             this.currentNoteEl.textContent = result.noteName;
             this.currentFreqEl.textContent = `${Math.round(result.freq)} Hz`;
@@ -417,17 +496,35 @@ class NoteScribeApp {
             this.centsNeedleEl.style.transform = `rotate(${angle}deg)`;
             this.centsValEl.textContent = `${result.cents > 0 ? '+' : ''}${result.cents}¢`;
             this.centsValEl.style.color = Math.abs(result.cents) < 10 ? '#10b981' : '#f59e0b';
+
+            if (this.diagnosticEl) {
+                this.diagnosticEl.textContent = `✓ Detected: ${result.noteName} (${Math.round(result.freq)} Hz)`;
+                this.diagnosticEl.style.color = '#38bdf8';
+            }
         } else {
-            this.resetHUD();
+            this.resetHUD(result?.status);
         }
     }
 
-    resetHUD() {
+    resetHUD(status = null) {
         this.currentNoteEl.textContent = '---';
         this.currentFreqEl.textContent = '0 Hz';
         this.centsNeedleEl.style.transform = 'rotate(0deg)';
         this.centsValEl.textContent = '0¢';
         this.centsValEl.style.color = '#94a3b8';
+
+        if (this.diagnosticEl) {
+            if (status === 'too_quiet') {
+                this.diagnosticEl.textContent = 'Sound too quiet — increase Mic Gain or play louder';
+                this.diagnosticEl.style.color = '#f59e0b';
+            } else if (status === 'noisy_or_unclear') {
+                this.diagnosticEl.textContent = 'Room noise or multiple chords detected';
+                this.diagnosticEl.style.color = '#94a3b8';
+            } else {
+                this.diagnosticEl.textContent = 'Listening... (play a note or sing)';
+                this.diagnosticEl.style.color = '#64748b';
+            }
+        }
     }
 
     drawWaveform(buffer) {
@@ -483,6 +580,47 @@ class NoteScribeApp {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+
+    // ==========================================
+    // SHEET MUSIC PRINTING & PDF EXPORT
+    // ==========================================
+    openPrintModal() {
+        if (this.transcribedNotes.length === 0) {
+            alert('No notes transcribed yet to print! Please listen to audio or load a demo song first.');
+            return;
+        }
+
+        const modal = document.getElementById('print-modal');
+        if (modal) {
+            modal.style.display = 'flex';
+            this.refreshPrintScore();
+        }
+    }
+
+    closePrintModal() {
+        const modal = document.getElementById('print-modal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+
+    refreshPrintScore() {
+        const paper = document.getElementById('printable-score-paper');
+        if (!paper || !window.scorePrinter) return;
+
+        const showLabels = document.getElementById('print-labels-toggle')?.checked ?? true;
+        const measuresVal = parseInt(document.getElementById('print-measures-per-line')?.value, 10) || 4;
+
+        window.scorePrinter.generatePrintableScore(
+            paper,
+            this.transcribedNotes,
+            this.transcriber.bpm,
+            {
+                measuresPerSystem: measuresVal,
+                showLabels: showLabels
+            }
+        );
     }
 
     exportJson() {
